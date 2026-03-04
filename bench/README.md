@@ -2,7 +2,7 @@
 
 Benchmarking scripts for SSD, SGLang, and vLLM.
 
-## Why server-based benchmarking?
+
 
 We benchmark SGLang/vLLM via their server APIs rather than offline/in-process for two reasons:
 1. Server mode exposes `/metrics` endpoints that offline mode doesn't.
@@ -10,11 +10,11 @@ We benchmark SGLang/vLLM via their server APIs rather than offline/in-process fo
 
 There is a small confound from HTTP overhead and prefill time being included in the
 wall-clock measurement, but since this is a decode-heavy workload (512 output tokens,
-each forward pass takes much longer than an HTTP round-trip), the difference is negligible.
+each forward pass takes much longer than an HTTP round-trip), we find the difference to empirically be negligible.
 
 ## Setup
 
-Use separate envs for all three stacks (`ssd`, `sglang`, `vllm`). FlashInfer/CUDA deps conflict, so sharing one env is not reliable. Use CUDA >= 12.8 for these benchmarks.
+Use separate envs for all three stacks (`ssd`, `sglang`, `vllm`) because required FlashInfer versions by each conflict. 
 
 ```bash
 # SSD (from repo root)
@@ -56,7 +56,7 @@ Set `SSD_DATASET_DIR` or edit `ssd/paths.py`. Generate with `scripts/get_data_fr
 ### SSD (native, no server)
 `bench.py` and `bench_helpers.py` are SSD-only (import from `ssd.*`).
 ```bash
-python -O bench.py --llama --size 70 --async --spec --k 7 --f 2 --b 1 \
+python -O bench.py --llama --size 70 --async --spec --k 7 --f 3 --b 1 \
     --temp 0 --numseqs 128 --output_len 512 --all --gpus 5
 ```
 
@@ -80,18 +80,6 @@ python bench/run_vllm_bench.py --llama
 python bench/run_vllm_bench.py --llama --mode ar
 ```
 
-## File roles
-
-| File | Role |
-|------|------|
-| `bench.py` | SSD benchmark (in-process, no server). SSD-only. |
-| `bench_helpers.py` | Dataset loading + model path resolution. SSD-only. |
-| `bench_paths.py` | Model paths for SGLang/vLLM baselines (env var overrides) |
-| `run_sglang_bench.py` | SGLang orchestrator: launches server, runs eval, cleans up |
-| `run_vllm_bench.py` | vLLM orchestrator: launches server, runs eval, cleans up |
-| `sglang_eval_client.py` | HTTP client for SGLang server, measures throughput |
-| `vllm_eval_client.py` | HTTP client for vLLM server, measures throughput |
-
 ## Troubleshooting
 
 If you see Triton errors like `OSError: [Errno 116] Stale file handle`, set cache dirs to local disk (not network filesystems):
@@ -101,7 +89,7 @@ export TRITON_CACHE_DIR=/scratch/$USER/triton_cache
 export TORCHINDUCTOR_CACHE_DIR=/scratch/$USER/torchinductor_cache
 ```
 
-If a run crashes or you Ctrl-C, stale worker processes can linger and hold GPUs.
+If a run crashes or you Ctrl-C, stale worker processes can linger and hold resources.
 Before rerunning, kill them and verify GPUs are free:
 
 ```bash
