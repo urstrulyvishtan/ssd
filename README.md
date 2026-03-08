@@ -34,9 +34,9 @@ This custom inference engine supports:
 
 ## Setup
 
-Requirements: Python 3.11+, CUDA >= 12.8. This code was written and tested on H100s. 
+**Requirements:** Python 3.11+, and for running inference: **Linux with CUDA ≥ 12.8** (tested on H100s). On macOS, `uv sync` installs core dependencies only (CUDA-only packages are skipped) so you can develop or run scripts that don’t need the GPU stack.
 
-If `uv` is not installed:
+### 1. Install uv (if needed)
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -44,27 +44,40 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Then: 
+### 2. Clone and install dependencies
 
 ```bash
 git clone https://github.com/tanishqkumar/ssd && cd ssd
-uv sync                    # core SSD deps
-# uv sync --extra scripts  # add deps used by scripts/
+uv sync
+# Optional: for download scripts
+uv sync --extra scripts
 source .venv/bin/activate
-python -c "from ssd import LLM; print('ok')"
 ```
 
-Set paths via environment variables. `SSD_HF_CACHE` should point to the HuggingFace **hub** directory — this is the directory that contains `models--org--name/` subdirectories (e.g. `/data/huggingface/hub`, not `/data/huggingface/`). `SSD_DATASET_DIR` should point to the directory containing the dataset subdirectories (`humaneval/`, `alpaca/`, etc).
+### 3. Environment variables
+
+Copy the example env file and set your paths:
 
 ```bash
-export SSD_HF_CACHE=/path/to/huggingface/hub
-export SSD_DATASET_DIR=/path/to/processed_datasets
-export SSD_CUDA_ARCH=9.0   # 9.0=H100, 8.0=A100, 8.9=L40/4090
+cp .env.example .env
+# Edit .env: set SSD_HF_CACHE and SSD_DATASET_DIR to your paths
+source .env
 ```
 
-### Download models + datasets
+- **`SSD_HF_CACHE`** — HuggingFace **hub** directory (contains `models--org--name/` subdirectories), e.g. `/data/huggingface/hub` (not the parent directory).
+- **`SSD_DATASET_DIR`** — Directory with dataset subdirs (`humaneval/`, `alpaca/`, etc.).
+- **`SSD_CUDA_ARCH`** — Optional; CUDA arch for kernels: `9.0` = H100/H200, `8.0` = A100, `8.9` = L40/4090.
 
-If you already have the models downloaded via `huggingface-cli` or similar, you can skip straight to datasets — just make sure `SSD_HF_CACHE` points to the right place. The download scripts require the `scripts` extra: `uv sync --extra scripts`.
+### 4. Verify setup
+
+```bash
+python scripts/check_setup.py           # check env vars
+python scripts/check_setup.py --import  # also test `from ssd import LLM` (requires Linux + CUDA)
+```
+
+### 5. Download models and datasets
+
+If you already have the models via `huggingface-cli`, you can skip to datasets. Download scripts need the `scripts` extra: `uv sync --extra scripts`.
 
 ```bash
 # models (uses SSD_HF_CACHE)
