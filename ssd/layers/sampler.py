@@ -1,7 +1,10 @@
 import torch
 from torch import nn
 
-from ssd.utils.async_helpers.async_spec_helpers import apply_sampler_x_rescaling
+from ssd.utils.async_helpers.async_spec_helpers import (
+    apply_sampler_x_rescaling,
+    entropy_to_sampler_x,
+)
 
 torch.manual_seed(0) 
 
@@ -26,9 +29,10 @@ class Sampler(nn.Module):
         logits_cpy.div_(temperatures.unsqueeze(dim=1))
         probs = torch.softmax(logits_cpy, dim=-1, dtype=torch.float)
         
-        # Apply sampler_x rescaling when conditions are met
+        # Apply sampler_x rescaling when conditions are met (uniform or per-position adaptive C)
         if self.sampler_x is not None and is_tree:
-            probs = apply_sampler_x_rescaling(probs, self.sampler_x, self.F)
+            C = entropy_to_sampler_x(logits_cpy)  # per-position adaptive from entropy
+            probs = apply_sampler_x_rescaling(probs, C, self.F)
         
         epsilon = 1e-10
         scores = probs.div_(torch.empty_like(probs).exponential_(1) + epsilon)

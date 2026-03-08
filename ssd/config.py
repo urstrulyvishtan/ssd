@@ -30,6 +30,9 @@ class Config:
     async_fan_out: int = 3
     fan_out_list: list[int] | None = None
     fan_out_list_miss: list[int] | None = None
+    # Geometric fan-out: if set, compute fan_out_list from alpha (paper Theorem 12)
+    fan_out_alpha: float | None = None  # acceptance rate; e.g. from previous run metrics
+    fan_out_r: float = 0.5  # power-law exponent for geometric allocation
     sampler_x: float | None = None 
     jit_speculate: bool = False 
 
@@ -62,8 +65,15 @@ class Config:
             self.max_model_len = min(
                 self.max_model_len, self.draft_hf_config.max_position_embeddings)
             if self.draft_async:
-                if self.fan_out_list is None: 
-                    self.fan_out_list = [self.async_fan_out] * (self.speculate_k + 1)
+                if self.fan_out_list is None:
+                    if self.fan_out_alpha is not None:
+                        from ssd.utils.fan_out import compute_geometric_fan_out_list
+                        self.fan_out_list = compute_geometric_fan_out_list(
+                            self.speculate_k, self.async_fan_out,
+                            self.fan_out_alpha, self.fan_out_r,
+                        )
+                    else:
+                        self.fan_out_list = [self.async_fan_out] * (self.speculate_k + 1)
                     self.MQ_LEN = sum(self.fan_out_list)
                 if self.fan_out_list_miss is None:
                     self.fan_out_list_miss = self.fan_out_list 

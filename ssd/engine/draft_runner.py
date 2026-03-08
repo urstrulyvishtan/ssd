@@ -286,13 +286,16 @@ class DraftRunner(ModelRunner):
         return out_tokens, out_logits, make_glue_decode_input_ids(out_tokens, rec_toks), cache_hits, out_activations
 
     def _service_spec_request(self):
-        """Receives a speculation request, serves it from cache, and sends results back in a single response."""
-        meta = self.recv_tensor((3,), torch.int64)
-        B, K, F = meta.tolist()
+        """Receives a speculation request (fused: header + int64 payload + optional EAGLE float)."""
+        header = torch.empty(5, dtype=torch.int64, device=self.device)
+        dist.recv(header, src=0, group=self.async_pg)
+        _cmd, B, K, F, is_eagle = header.tolist()
+        is_eagle = bool(is_eagle)
 
-        # Receive all request payload in one fused int64 burst (includes temperatures encoded as int64)
         max_blocks = self.config.max_blocks
-        fused_total = (3 * B) + B + (B * max_blocks) + B  # +B for temps_as_int64
+        fused_total = (3 * B) + B + (B * max_blocks) + B  # cache_keys, num_tokens, block_tables, temps
+        if is_eagle:
+            fused_total += B + B * K  # extend_counts, extend_token_ids
         fused_req = recv_int64(self.async_pg, src=0,
                                total_length=fused_total, device=self.device)
         off = 0
@@ -301,11 +304,17 @@ class DraftRunner(ModelRunner):
         seq_ids = cache_keys[:, 0]
         num_tokens = fused_req[off:off + B].to(torch.int64)
         off += B
-        draft_block_tables = fused_req[off:off + B *
-                                       max_blocks].view(B, max_blocks).to(torch.int32)
+        draft_block_tables = fused_req[off:off + B * max_blocks].view(B, max_blocks).to(torch.int32)
         off += B * max_blocks
         temps_as_int64 = fused_req[off:off + B]
         off += B
+        extend_counts = None
+        extend_token_ids = None
+        if is_eagle:
+            extend_counts = fused_req[off:off + B].clone()
+            off += B
+            extend_token_ids = fused_req[off:off + B * K].view(B, K).clone()
+            off += B * K
         assert off == fused_total
         temperatures = temps_as_int64.to(torch.int32).view(torch.float32)
 
@@ -313,21 +322,17 @@ class DraftRunner(ModelRunner):
             B, 3 * self.config.d_model_target, dtype=self.hf_config.torch_dtype, device=self.device
         ) if self.config.use_eagle else None
 
-        extend_counts = None
         extend_eagle_acts = None
-        extend_token_ids = None
 
-        if self.config.use_eagle:
-            dist.recv(target_recovery_activations, src=0, group=self.async_pg)
-
-            # Receive extend data for fused glue decode
+        if self.config.use_eagle and is_eagle:
             act_dim = 3 * self.config.d_model_target
-            extend_counts = torch.zeros(B, dtype=torch.int64, device=self.device)
-            extend_eagle_acts = torch.zeros(B, K, act_dim, dtype=self.hf_config.torch_dtype, device=self.device)
-            extend_token_ids = torch.zeros(B, K, dtype=torch.int64, device=self.device)
-            dist.recv(extend_counts, src=0, group=self.async_pg)
-            dist.recv(extend_eagle_acts, src=0, group=self.async_pg)
-            dist.recv(extend_token_ids, src=0, group=self.async_pg)
+            fused_eagle_float = torch.empty(
+                B, act_dim + K * act_dim,
+                dtype=self.hf_config.torch_dtype, device=self.device,
+            )
+            dist.recv(fused_eagle_float, src=0, group=self.async_pg)
+            target_recovery_activations = fused_eagle_float[:, :act_dim].view(B, act_dim)
+            extend_eagle_acts = fused_eagle_float[:, act_dim:].view(B, K, act_dim)
 
             if self.config.verbose:
                 recovery_tokens_target = cache_keys[:, 2].clone()

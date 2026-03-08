@@ -12,6 +12,7 @@ from ssd.engine.speculator_async import SpeculatorAsync
 from ssd.engine.speculator_sync import SpeculatorSync
 from ssd.engine.step import InferenceStep, AutoRegressiveStep, SpecDecodeStep
 from ssd.engine.verifier import Verifier
+from ssd.utils.fan_out import suggest_geometric_fan_out_list
 
 import atexit
 from dataclasses import fields
@@ -260,6 +261,18 @@ class LLMEngine:
                     for k in range(self.config.speculate_k + 1):
                         prob = freq_counts.get(k, 0) / total_count
                         print(f"  {k}: {prob:.3f}", flush=True)
+                    # Suggest geometric fan-out for next run (improves cache hit at higher temp)
+                    suggested = suggest_geometric_fan_out_list(
+                        METRICS["accepted_suffix_lens_on_hit"],
+                        self.config.speculate_k,
+                        self.config.async_fan_out,
+                        r=0.5,
+                    )
+                    if suggested is not None:
+                        print(
+                            f"[metrics] Suggested geometric fan_out_list (next run): {suggested}",
+                            flush=True,
+                        )
                 if METRICS['accepted_suffix_lens_on_miss']:
                     avg_suffix_len_on_miss = sum(
                         METRICS['accepted_suffix_lens_on_miss']) / len(METRICS['accepted_suffix_lens_on_miss'])

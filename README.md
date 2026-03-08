@@ -19,6 +19,34 @@ SSD is a new type of speculative decoding (SD). In normal SD, a small and fast m
 
 In SSD, they happen in parallel, on distinct hardware. The small model anticipates likely verification outcomes in advance, and speculates for all of them at once. If it guessed correctly, the speculation can be returned immediately so drafting overhead is eliminated entirely.
 
+---
+
+### Limitations (upstream) & what this fork changes
+
+**Limitations in the original implementation:**
+
+- **NCCL:** Target↔draft used many round-trips per step (e.g. 7+ sends with EAGLE), adding ~50–90 µs latency per step.
+- **Fan-out:** `fan_out_list` was uniform; no geometric allocation from the paper (Theorem 12).
+- **Sampler C:** Saguaro `sampler_x` was a single scalar; no per-position adaptive C from entropy.
+- **Batch fallback:** On cache miss with `jit_speculate=True`, the whole batch falls back to JIT (no per-element hybrid).
+- **Masks:** Step‑0 mask build does heavy CPU work (numpy, packbits) every round; no reuse for (K, F, max_context_len).
+- **Tree cache:** Cache is reset each round; no reuse of glue-decode KV prefix when the accepted prefix matches.
+- **Verify:** Full-vocab softmax allocated for the whole batch even when only some elements need temperature.
+- **FlashInfer:** `plan()` + CPU sync inside the CUDA graph replay loop, once per tree step.
+
+**Improvements in this fork:**
+
+| Area | Change |
+|------|--------|
+| **NCCL** | Fused request path: one header + one int64 payload (+ one float when EAGLE). 7 sends → 2–3. |
+| **Fan-out** | Geometric `fan_out_list` from empirical α (metrics). Config `fan_out_alpha` / `--fan-out-alpha`; metrics suggest a list for the next run. |
+| **Sampler C** | Per-position adaptive C from logits entropy in the draft sampler (high entropy → lower C). |
+| **Setup** | CUDA-only deps optional on Linux; `.env.example`, `check_setup.py`; README setup clarified. |
+
+See [IMPROVEMENTS.md](IMPROVEMENTS.md) for details. The rest (hybrid per-element fallback, mask precomputation, KV prefix reuse, verify sparse probs, plan sync) are left as future work.
+
+---
+
 This custom inference engine supports:
 - A reference implementation of the SSD algorithm
 - Optimized SD and autoregressive baselines

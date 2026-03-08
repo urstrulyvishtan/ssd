@@ -37,6 +37,8 @@ def parse_arguments():
     parser.add_argument("--fl", type=int, nargs='+', default=None, help="Fan out list (e.g., --fl 1 3 4 becomes [1, 3, 4])")
     parser.add_argument("--flh", type=int, nargs='+', default=None, help="Fan out list (e.g., --flh 1 3 4 becomes [1, 3, 4])")
     parser.add_argument("--flm", type=int, nargs='+', default=None, help="Fan out list miss (e.g., --flm 1 3 4 becomes [1, 3, 4])")
+    parser.add_argument("--fan-out-alpha", type=float, default=None, help="Geometric fan-out: acceptance rate α (from metrics); computes fan_out_list via Theorem 12")
+    parser.add_argument("--fan-out-r", type=float, default=0.5, help="Geometric fan-out: power-law exponent r (default 0.5)")
     parser.add_argument("--backup", type=str, choices=["jit", "fast"], default="jit", help="Backup strategy (jit or fast)")
 
     # Memory and batching configuration
@@ -180,6 +182,9 @@ def create_llm_kwargs(args, draft_path):
         llm_kwargs["fan_out_list"] = args.flh
     if args.flm is not None:
         llm_kwargs["fan_out_list_miss"] = args.flm
+    if getattr(args, "fan_out_alpha", None) is not None:
+        llm_kwargs["fan_out_alpha"] = args.fan_out_alpha
+        llm_kwargs["fan_out_r"] = getattr(args, "fan_out_r", 0.5)
 
     return llm_kwargs
 

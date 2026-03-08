@@ -1,3 +1,4 @@
+import math
 import torch
 from ssd.config import Config
 from transformers import AutoTokenizer
@@ -78,28 +79,54 @@ def get_forked_recovery_tokens_from_logits(config: Config, logits: torch.Tensor,
     return idxs_flat
 
  
-def apply_sampler_x_rescaling(probs: torch.Tensor, sampler_x: float, F: int) -> torch.Tensor:
-    """Apply sampler_x rescaling to probabilities.
-    
+def apply_sampler_x_rescaling(
+    probs: torch.Tensor,
+    sampler_x: float | torch.Tensor,
+    F: int | None = None,
+) -> torch.Tensor:
+    """Apply sampler_x (Saguaro C) rescaling to probabilities.
+
     Args:
-        probs: Probability tensor of shape [B, S, V] where S can be =1
-        sampler_x: Rescaling factor for top-F probabilities
-        F: Number of top probabilities to rescale
-        
+        probs: Probability tensor of shape [B, S, V] or [N, V]
+        sampler_x: Rescaling factor — float (uniform) or 1D tensor [N] per-position C
+        F: Number of top probabilities to rescale. Required when sampler_x is float.
+
     Returns:
         Rescaled and renormalized probabilities
     """
-    # Find topF indices with highest probs
-    _, topk_indices = torch.topk(probs, F+1, dim=-1)  # [B, S, F]
+    if isinstance(sampler_x, torch.Tensor):
+        # Per-position C: shape [N] matching probs.shape[0]
+        assert F is not None, "F required for top-k count when using per-position C"
+        C = sampler_x.to(probs.dtype)
+        if C.dim() == 1:
+            C = C.view(-1, 1)
+        k = min(probs.shape[-1], F + 1)
+        _, topk_indices = torch.topk(probs, k, dim=-1)
+        topf_mask = torch.zeros_like(probs, dtype=torch.bool)
+        topf_mask.scatter_(dim=-1, index=topk_indices, value=True)
+        probs = torch.where(topf_mask, probs * C.expand_as(probs), probs)
+    else:
+        assert F is not None, "F required when sampler_x is scalar"
+        _, topk_indices = torch.topk(probs, F + 1, dim=-1)
+        topf_mask = torch.zeros_like(probs, dtype=torch.bool)
+        topf_mask.scatter_(dim=-1, index=topk_indices, value=True)
+        probs = torch.where(topf_mask, probs * sampler_x, probs)
 
-    # Create a mask for topF positions
-    topf_mask = torch.zeros_like(probs, dtype=torch.bool)
-    topf_mask.scatter_(dim=-1, index=topk_indices, value=True)
-
-    # Rescale topF probs by sampler_x factor
-    probs = torch.where(topf_mask, probs * sampler_x, probs)
-
-    # Renormalize to get valid distribution
     probs = probs / probs.sum(dim=-1, keepdim=True)
-
     return probs
+
+
+def entropy_to_sampler_x(logits: torch.Tensor, clamp_lo: float = 0.1) -> torch.Tensor:
+    """
+    Compute per-position adaptive C from logits (entropy-based).
+
+    High entropy -> more aggressive (lower C). Low entropy -> C close to 1.
+    C = 1 - 0.3 * (H / log(V)) clamped to [clamp_lo, 1].
+    """
+    probs = torch.softmax(logits.float(), dim=-1)
+    log_probs = torch.log(probs.clamp(min=1e-10))
+    H = -(probs * log_probs).sum(dim=-1)
+    V = logits.shape[-1]
+    max_H = math.log(max(V, 2))
+    C = (1.0 - 0.3 * (H / max_H)).clamp(min=clamp_lo, max=1.0)
+    return C

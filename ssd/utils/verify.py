@@ -99,7 +99,7 @@ def verify(
             one_hot_q.scatter_(2, argmax_q.unsqueeze(-1), 1.0)
             probs_q[z_q] = one_hot_q
 
-        # Apply sampler_x rescaling to draft distribution if provided
+        # Apply sampler_x rescaling to draft distribution if provided (uniform C; verification uses scalar)
         if sampler_x is not None:
             assert async_fan_out is not None, "async_fan_out must be provided if sampler_x is provided"
             probs_q = apply_sampler_x_rescaling(probs_q, sampler_x, async_fan_out)
